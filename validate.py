@@ -10,20 +10,39 @@ import wandb
 
 @hydra.main(version_base=None, config_path="config", config_name="validate")  # only hydra config and overrides
 def main(overrides):
-    # set to prevent warning
-    torch.set_float32_matmul_precision("high")
 
-    # get checkpoint
-    api = wandb.Api()
-    project_path = f"{overrides.wandb.entity}/{overrides.wandb.project}"
-    checkpoint_path = f"{project_path}/model-{overrides.runid}:{overrides.checkpoint}"
-    checkpoint = Path(api.artifact(checkpoint_path).download()) / "model.ckpt"
+    torch.set_float32_matmul_precision("high")                                # set to prevent warning
 
-    # get training config and merge with overrides
-    run = api.run(f"{project_path}/{overrides.runid}")
-    config = OmegaConf.create(deepcopy(run.config))
+
+    if overrides.local_load is not None:
+
+        checkpoint = Path(overrides.local_load).expanduser()
+        if not checkpoint.is_file():
+            raise FileNotFoundError(f"Local checkpoint does not exist: {checkpoint}")
+
+        config_path = checkpoint.with_suffix(".yaml")
+        if not config_path.is_file():
+            raise FileNotFoundError(f"Training config sidecar does not exist: {config_path}")
+        
+        config_bytes = config_path.read_bytes()
+        encoding     = "utf-16" if config_bytes.startswith((b"\xff\xfe", b"\xfe\xff")) else "utf-8-sig"
+        config       = OmegaConf.create(config_bytes.decode(encoding))
+    else:
+        if overrides.runid is None:
+            raise ValueError("Provide either local_load=<checkpoint.ckpt> or a W&B runid")
+
+        api             = wandb.Api()
+        project_path    = f"{overrides.wandb.entity}/{overrides.wandb.project}"
+        checkpoint_path = f"{project_path}/model-{overrides.runid}:{overrides.checkpoint}"
+        checkpoint      = Path(api.artifact(checkpoint_path).download()) / "model.ckpt"
+
+        run     = api.run(f"{project_path}/{overrides.runid}")
+        config  = OmegaConf.create(deepcopy(run.config))
+
+
     for key in overrides.deletes:
         config.pop(key, None)
+        
     with open_dict(config):
         config.merge_with(overrides)
 
@@ -31,17 +50,21 @@ def main(overrides):
     datamodule = instantiate(config.datamodule)
 
     # network + transform + loss functions = lightning module
-    network = instantiate(config.network)
-    transform = instantiate(config.transform)
-    loss_functions = instantiate(config.loss_functions)
-    litmodule = instantiate(config.litmodule, network, transform, loss_functions, optimizer=None, scheduler=None)
+    network         = instantiate(config.network)
+    transform       = instantiate(config.transform)
+    loss_functions  = instantiate(config.loss_functions)
+    litmodule       = instantiate(config.litmodule, network, transform, loss_functions, optimizer=None, scheduler=None)
+
     if overrides.local_state_dict is not None:
+
         state_dict = torch.load(overrides.local_state_dict, weights_only=True, map_location="cpu")
         new_state_dict = {}
         for key in state_dict:
             new_state_dict[key.replace("_orig_mod", "network")] = state_dict[key]
         state_dict = new_state_dict
+
     else:
+
         state_dict = torch.load(checkpoint, weights_only=True, map_location="cpu")["state_dict"]
         if "state_dict_maps" in overrides:  # temporary
             new_state_dict = {}
@@ -52,6 +75,7 @@ def main(overrides):
                         new_key = new_key.replace(before, after)
                 new_state_dict[new_key] = state_dict[key]
             state_dict = new_state_dict
+
     litmodule.load_state_dict(state_dict)
     litmodule.eval()
     litmodule.freeze()
@@ -59,6 +83,7 @@ def main(overrides):
     # callbacks
     callbacks = instantiate(config.callbacks)
     callbacks.pop("checkpoint", None)
+    callbacks.pop("local_save", None)
 
     # trainer and validate!
     trainer = instantiate(config.trainer, logger=False, callbacks=[cb for cb in callbacks.values()])

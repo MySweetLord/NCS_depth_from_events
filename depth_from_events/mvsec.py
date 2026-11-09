@@ -51,15 +51,21 @@ class MvsecSequence:
             "rect_map_y": self.root_dir / recording / "calib" / f"{recording}_left_y_map.txt",
             "calibration": self.root_dir / recording / "calib" / f"camchain-imucam-{recording}.yaml",
         }
-        assert all(p.exists() for p in paths.values())
+        missing_paths = {name: path for name, path in paths.items() if not path.exists()}
+        if missing_paths:
+            missing = "\n".join(f"  {name}: {path}" for name, path in missing_paths.items())
+            raise FileNotFoundError(f"Missing MVSEC files for recording {self.recording}:\n{missing}")
 
         # checks
         assert not (self.augmentations is not None and self.gt)  # no augmentations on gt
 
+        self._data_path = paths["data"]
+        self._gt_path = paths["gt"]
+
         # open large h5 files only once
         self.fs = dict(
-            data=h5py.File(paths["data"], "r"),
-            gt=h5py.File(paths["gt"], "r"),
+            data=h5py.File(self._data_path, "r"),
+            gt=h5py.File(self._gt_path, "r"),
         )
 
         # forward rectification map
@@ -108,6 +114,18 @@ class MvsecSequence:
         # match seq_len if given
         self.chunk_size = self.seq_len if self.seq_len is not None else self.chunk_size
         self.chunk_map = batched(range(len(self.t_start)), self.chunk_size)
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["fs"] = None
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.fs = dict(
+            data=h5py.File(self._data_path, "r"),
+            gt=h5py.File(self._gt_path, "r"),
+        )
 
     def init_slice(self):
         # get start and end time
@@ -357,9 +375,15 @@ class MvsecDataModule(LightningDataModule):
         if self.download:
             # event and gt data in h5
             # parent: https://drive.google.com/drive/folders/1gDy2PwVOu_FPOsEZjojdWEB2ZHmpio8D
+            # urls = [
+            #    ("indoor_flying", "https://drive.google.com/drive/folders/1CEuvvahWQntNIqXWZhXu_WknsTLm4Sum"),
+            #    ("outdoor_day", "https://drive.google.com/drive/folders/1WUapfrd2DNQNuxPt9IqUHCcPCPKLiNvT"),
+            #]
+
+        
             urls = [
-                ("indoor_flying", "https://drive.google.com/drive/folders/1CEuvvahWQntNIqXWZhXu_WknsTLm4Sum"),
-                ("outdoor_day", "https://drive.google.com/drive/folders/1WUapfrd2DNQNuxPt9IqUHCcPCPKLiNvT"),
+                 ("indoor_flying", "https://drive.google.com/drive/folders/1rwyRk26wtWeRgrAx_fgPc-ubUzTFThkV"),
+                 ("outdoor_day", "https://drive.google.com/drive/folders/1rwyRk26wtWeRgrAx_fgPc-ubUzTFThkV"),
             ]
 
             # download if not there
@@ -380,16 +404,16 @@ class MvsecDataModule(LightningDataModule):
                         (self.root_dir / name / f"{name}_calib.zip").unlink()
 
         # train on outdoor_day2, validate on part of outdoor_day1 (default)
-        train_recordings = ["outdoor_day2"] if self.train_recordings is None else self.train_recordings  # override
-        train_time = [(0, None)] if self.train_time is None else self.train_time
-        val_recordings = ["outdoor_day1"] if self.val_recordings is None else self.val_recordings
-        val_time = [(222.4, 240.4)] if self.val_recordings is None else self.val_time
+        train_recordings    = ["outdoor_day2"] if self.train_recordings is None else self.train_recordings  # override
+        train_time          = [(0, None)] if self.train_time is None else self.train_time
+        val_recordings      = ["outdoor_day1"] if self.val_recordings is None else self.val_recordings
+        val_time            = [(222.4, 240.4)] if self.val_recordings is None else self.val_time
 
         # store for building datasets later
         self.train_recordings = train_recordings
-        self.train_time = train_time
-        self.val_recordings = val_recordings
-        self.val_time = val_time
+        self.train_time       = train_time
+        self.val_recordings   = val_recordings
+        self.val_time         = val_time
 
     def setup(self, stage):
         if stage == "fit":
@@ -447,18 +471,21 @@ class MvsecDataModule(LightningDataModule):
 
 if __name__ == "__main__":
     datamodule = MvsecDataModule(
-        root_dir="data/raw/mvsec",
-        time_window=0.01,  # s
-        train_seq_len=100,
-        train_crop=None,
-        val_recordings=None,
-        val_time=None,
-        val_crop=None,
-        rectify=True,
-        augmentations=["backward", "polarity", "horizontal"],
-        batch_size=8,
-        shuffle=True,
-        num_workers=8,
-        download=True,
+        root_dir        = "data/raw/mvsec",
+        time_window     = 0.01,
+        train_seq_len   = 100,
+        train_recordings= ["indoor_flying1"],
+        train_time      = None,
+        train_crop      = None,
+        val_recordings  = ["indoor_flying2"],
+        val_time        = None,
+        val_crop        = None,
+        rectify         = True,
+        augmentations   = ["backward", "polarity", "horizontal"],
+        return_events   = True,
+        batch_size      = 8,
+        shuffle         = True,
+        num_workers     = 8,
+        download        = True,
     )
     datamodule.prepare_data()

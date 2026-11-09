@@ -1,6 +1,6 @@
 visualizer:
   _target_: depth_from_events.callbacks.ImageLogger
-  root_dir: logs/images/${...name}
+  root_dir: logs/images/pretrain/${...name}
   keys:
     - ${stage}/events
     - ${stage}/cmax_accumulated_events

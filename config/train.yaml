@@ -1,5 +1,6 @@
 defaults:
-  - datamodule: uzh_fpv
+  - data_paths
+  - datamodule: mvsec
   - litmodule: train
   - network: depth_pose
   - transform: depth_to_flow
@@ -16,6 +17,7 @@ defaults:
   - callbacks:
     - progress
     - checkpoint
+    - local_save
   - logger: nothing
   - hydra: no_logging
   - _self_  # to disable warning
@@ -26,5 +28,5 @@ wandb:
 
 stage: train
 name: ${stage}
-runid: null  # start from checkpoint
+runid: run2  # start from checkpoint
 checkpoint: null

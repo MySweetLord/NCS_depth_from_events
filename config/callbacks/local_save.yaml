@@ -1,0 +1,5 @@
+local_save:
+  _target_: depth_from_events.local_save.LocalCheckpoint
+  every_n_epochs: 10
+  output_dir: checkpoints/run2
+  

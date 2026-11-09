@@ -10,8 +10,8 @@ class Train(LightningModule):
     def __init__(self, network, transform, loss_functions, optimizer, scheduler):
         super().__init__()
 
-        self.network = network
-        self.transform = transform
+        self.network    = network
+        self.transform  = transform
         self.loss_functions = loss_functions
         self.optimizer = optimizer
         self.scheduler = scheduler

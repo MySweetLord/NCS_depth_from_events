@@ -30,18 +30,20 @@ class LazyConvGru(nn.Module):
         self.hh = nn.LazyConv2d(3 * out_channels, kernel_size, padding=padding, padding_mode=padding_mode)
 
     def forward(self, x, hx):
+
         # get previous output
         if hx is None:
             b, _, h, w = x.shape
             hx = torch.zeros(b, self.out_channels, h, w, device=x.device, dtype=x.dtype)
 
         # compute concatenated gates
-        ih, hh = self.ih(x), self.hh(hx)
-        ih_r, ih_z, ih_n = ih.chunk(3, dim=1)
+        ih, hh = self.ih(x), self.hh(hx)            # apply conv to input x and hidden state hx
+        ih_r, ih_z, ih_n = ih.chunk(3, dim=1)       # splits the tensor into three equal pieces along the channel dimension.
         hh_r, hh_z, hh_n = hh.chunk(3, dim=1)
-        r = torch.sigmoid(ih_r + hh_r)
-        z = torch.sigmoid(ih_z + hh_z)
-        n = torch.tanh(ih_n + r * hh_n)
+
+        r = torch.sigmoid(ih_r + hh_r)      # reset gate
+        z = torch.sigmoid(ih_z + hh_z)      # update gate
+        n = torch.tanh(ih_n + r * hh_n)     # candidate hidden state
 
         # compute hidden
         hx = (1 - z) * hx + z * n
@@ -79,23 +81,22 @@ class Residual(nn.Sequential):
 
     def forward(self, input):
         x = input
-        *before, residual, after = self
+        *before, residual, after = self         # Unpack modules in sequential contrainer, before[0] = LazyConv2d + activation, before[1] = LazyConv2d, residual = LazyConv2d or identity, after = activation
+
         for layer in before:
-            x = layer(x)
-        res = residual(input)
-        x = after(x + res)
+            x = layer(x)                        # Apply conv1 and conv2
+
+        res = residual(input)                   # Apply residual connection
+        x   = after(x + res)                    # Apply final activation after adding residual
+
         return x
 
 
 def feedforward(synapse, neuron):
-    return nn.Sequential(
-        OrderedDict(
-            [
-                ("synapse", synapse),
-                ("neuron", neuron),
-            ]
-        )
-    )
+    return nn.Sequential(OrderedDict([
+                                    ("synapse", synapse),
+                                    ("neuron", neuron)]
+                                    ))
 
 
 def named_sequential(prefix, *args):
@@ -109,27 +110,21 @@ def named_residual(prefix, *args):
 
 
 def res_block(out_channels, kernel_size, activation_fn, stride=1, padding_mode="zeros"):
+
     padding = kernel_size // 2
+
     if stride != 1:
-        downsample = feedforward(
-            nn.LazyConv2d(out_channels, kernel_size, stride=stride, padding=padding, padding_mode=padding_mode),
-            nn.Identity(),
-        )
+        downsample = feedforward(nn.LazyConv2d(out_channels, kernel_size, stride=stride, padding=padding, padding_mode=padding_mode),nn.Identity())
     else:
         downsample = nn.Identity()
+
     block = named_residual(
         "res",
-        feedforward(
-            nn.LazyConv2d(out_channels, kernel_size, stride=stride, padding=padding, padding_mode=padding_mode),
-            activation_fn(),
-        ),
-        feedforward(
-            nn.LazyConv2d(out_channels, kernel_size, padding=padding, padding_mode=padding_mode),
-            nn.Identity(),
-        ),
+        feedforward(nn.LazyConv2d(out_channels, kernel_size, stride=stride, padding=padding, padding_mode=padding_mode), activation_fn()),
+        feedforward(nn.LazyConv2d(out_channels, kernel_size, padding=padding, padding_mode=padding_mode), nn.Identity()), 
         downsample,
-        activation_fn(),
-    )
+        activation_fn())
+
     return block
 
 
@@ -160,16 +155,19 @@ def conv_encoder(out_channels, activation_fn, padding_mode="zeros"):
     - Head with large kernel
     - 2 pairs of residual blocks with stride
     """
+
     # padder = LazyPadder(8)
     head = feedforward(
-        nn.LazyConv2d(out_channels // 4, 7, stride=2, padding=3, padding_mode=padding_mode),
+        nn.LazyConv2d(out_channels // 4, kernel_size = 7, stride=2, padding=3, padding_mode=padding_mode),
         activation_fn(),
     )
+
     encoder = named_sequential(
         "conv",
-        res_block(out_channels // 2, 3, activation_fn, stride=2, padding_mode=padding_mode),
-        res_block(out_channels, 3, activation_fn, stride=2, padding_mode=padding_mode),
+        res_block(out_channels // 2, kernel_size=3, activation_fn=activation_fn, stride=2, padding_mode=padding_mode),
+        res_block(out_channels, kernel_size=3, activation_fn=activation_fn, stride=2, padding_mode=padding_mode),
     )
+
     return named_sequential("enc", head, encoder)
 
 

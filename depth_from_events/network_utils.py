@@ -32,7 +32,8 @@ class NetworkWrapper(nn.Module):
         self.reset_state()
 
     def forward(self, input):
-        hidden = self.get_state()
+        
+        hidden    = self.get_state()
         x, hidden = super().forward(input, hidden)
         self.set_state(hidden)
         return x

@@ -2,13 +2,16 @@ defaults:
   - hydra: no_logging
   - _self_
 
+local_load: checkpoints/local/epoch=0050-step=00018500.ckpt
+
 wandb:
+  enable: false
   entity: dfe-cvpr25
   project: depth_from_events
 
 stage: validate
 name: ${stage}_${runid}_${checkpoint}
-runid: ???
+runid: pretrained
 checkpoint: latest
 local_state_dict: null
 

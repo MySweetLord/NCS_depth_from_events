@@ -15,12 +15,18 @@ def main(config):
 
     # get checkpoint if given
     if config.runid is not None and config.checkpoint is not None:
-        api = wandb.Api()
-        project_path = f"{config.wandb.entity}/{config.wandb.project}"
+
+        api             = wandb.Api()
+        project_path    = f"{config.wandb.entity}/{config.wandb.project}"
         checkpoint_path = f"{project_path}/model-{config.runid}:{config.checkpoint}"
-        checkpoint = Path(api.artifact(checkpoint_path).download()) / "model.ckpt"
+        checkpoint      = Path(api.artifact(checkpoint_path).download()) / "model.ckpt"
+
     else:
         checkpoint = None
+
+    if config.data_source == "drive":
+        from google.colab import drive
+        drive.mount("/content/drive")
 
     # reproducibility
     if config.trainer.deterministic:
@@ -30,12 +36,12 @@ def main(config):
     datamodule = instantiate(config.datamodule)
 
     # network + transform + loss functions + optimizer = lightning module
-    network = instantiate(config.network)
-    transform = instantiate(config.transform)
-    loss_functions = instantiate(config.loss_functions)
-    optimizer = instantiate(config.optimizer)
-    scheduler = instantiate(config.scheduler)
-    litmodule = instantiate(config.litmodule, network, transform, loss_functions, optimizer, scheduler)
+    network         = instantiate(config.network)
+    transform       = instantiate(config.transform)
+    loss_functions  = instantiate(config.loss_functions)
+    optimizer       = instantiate(config.optimizer)
+    scheduler       = instantiate(config.scheduler)
+    litmodule       = instantiate(config.litmodule, network, transform, loss_functions, optimizer, scheduler)
 
     # load state dict from checkpoint
     # lighting load_from_checkpoint is not transparent enough
@@ -54,10 +60,12 @@ def main(config):
 
     # callbacks
     callbacks = instantiate(config.callbacks)
+    if "local_save" in callbacks:
+        callbacks["local_save"].set_config(OmegaConf.to_yaml(config, resolve=False))
 
     # logger
-    wandb.require("legacy-service")  # to have diff.patch stored
     logger = instantiate(config.logger)
+    
     if logger is not None:
         logger.log_hyperparams(OmegaConf.to_container(config, resolve=True, throw_on_missing=True))
         enable_checkpointing = True
@@ -67,10 +75,13 @@ def main(config):
         callbacks.pop("checkpoint", None)
 
     # trainer and train!
+
+    print("start training")
+    
     trainer = instantiate(
         config.trainer,
-        logger=logger,
-        callbacks=[cb for cb in callbacks.values()],
+        logger      = logger,
+        callbacks   = [cb for cb in callbacks.values()],
         enable_checkpointing=enable_checkpointing,
     )
     trainer.fit(litmodule, datamodule=datamodule)
